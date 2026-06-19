@@ -476,7 +476,65 @@ test("string coerce works unaffected", () => {
   expect(schema.parse(undefined)).toBe("undefined");
 });
 
-test("flattenError still works correctly with deep paths", () => {
+test("flattenError preserves full deep paths (not collapsed to first segment)", () => {
+  const schema = z.object({
+    user: z.object({
+      profile: z.object({
+        name: z.string(),
+        age: z.number(),
+      }),
+    }),
+  });
+  const result = schema.safeParse({ user: { profile: { name: 123, age: "not-a-number" } } });
+  expect(result.success).toBe(false);
+  if (!result.success) {
+    const flat = z.flattenError(result.error);
+    // Key must be the FULL dot-path, not just the top-level "user"
+    expect(Object.keys(flat.fieldErrors).sort()).toEqual(["user.profile.age", "user.profile.name"]);
+    expect(flat.fieldErrors).not.toHaveProperty("user");
+    expect(flat.fieldErrors).not.toHaveProperty("user.profile");
+    expect(Array.isArray((flat.fieldErrors as any)["user.profile.name"])).toBe(true);
+    expect(Array.isArray((flat.fieldErrors as any)["user.profile.age"])).toBe(true);
+  }
+});
+
+test("flattenError supports multiple errors at different depths with correct paths", () => {
+  const schema = z.object({
+    topLevel: z.string(),
+    nested: z.object({
+      deep: z.object({
+        value: z.number(),
+      }),
+    }),
+  });
+  const result = schema.safeParse({
+    topLevel: 123,
+    nested: { deep: { value: "bad" } },
+  });
+  expect(result.success).toBe(false);
+  if (!result.success) {
+    const flat = z.flattenError(result.error);
+    expect(Object.keys(flat.fieldErrors).sort()).toEqual(["nested.deep.value", "topLevel"]);
+    expect((flat.fieldErrors as any).topLevel.length).toBe(1);
+    expect((flat.fieldErrors as any)["nested.deep.value"].length).toBe(1);
+  }
+});
+
+test("flattenError handles array index paths correctly", () => {
+  const schema = z.object({
+    items: z.array(z.object({ name: z.string() })),
+  });
+  const result = schema.safeParse({
+    items: [{ name: "ok" }, { name: 123 }, { name: 456 }],
+  });
+  expect(result.success).toBe(false);
+  if (!result.success) {
+    const flat = z.flattenError(result.error);
+    expect(Object.keys(flat.fieldErrors).sort()).toEqual(["items[1].name", "items[2].name"]);
+  }
+});
+
+test("flattenError still works correctly with single-level paths", () => {
   const schema = z.object({
     user: z.object({
       name: z.string(),
@@ -486,7 +544,7 @@ test("flattenError still works correctly with deep paths", () => {
   expect(result.success).toBe(false);
   if (!result.success) {
     const flat = z.flattenError(result.error);
-    expect(flat.fieldErrors).toHaveProperty("user");
+    expect(flat.fieldErrors).toHaveProperty("user.name");
   }
 });
 

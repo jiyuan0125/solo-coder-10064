@@ -311,8 +311,9 @@ export function flattenError<T, U>(error: $ZodError<T>, mapper = (issue: $ZodIss
   const formErrors: U[] = [];
   for (const sub of error.issues) {
     if (sub.path.length > 0) {
-      fieldErrors[sub.path[0]!] = fieldErrors[sub.path[0]!] || [];
-      fieldErrors[sub.path[0]!].push(mapper(sub));
+      const key = toDotPath(sub.path);
+      fieldErrors[key] = fieldErrors[key] || [];
+      fieldErrors[key].push(mapper(sub));
     } else {
       formErrors.push(mapper(sub));
     }
