@@ -178,7 +178,22 @@ export type HasSize = { size: number };
 export type HasLength = { length: number }; // string | Array<unknown> | Set<unknown> | File;
 export type Numeric = number | bigint | Date;
 export type SafeParseResult<T> = SafeParseSuccess<T> | SafeParseError<T>;
-export type SafeParseSuccess<T> = { success: true; data: T; error?: never };
+export type SafeParseSuccess<T> = {
+  success: true;
+  data: T;
+  error?: never;
+  /**
+   * Issues that were suppressed by catch/fallback handlers during parsing.
+   * Allows tracing original validation failures even when a fallback
+   * value was ultimately used. Only present when there were suppressed issues.
+   */
+  suppressedIssues?: errors.$ZodIssue[];
+  /**
+   * True if any catch/fallback handler was triggered during parsing,
+   * indicating that the output data may contain fallback values.
+   */
+  fallback?: boolean;
+};
 export type SafeParseError<T> = {
   success: false;
   data?: never;

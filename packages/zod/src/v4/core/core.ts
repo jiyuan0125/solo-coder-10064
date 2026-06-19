@@ -128,6 +128,14 @@ export interface $ZodConfig {
   localeError?: errors.$ZodErrorMap | undefined;
   /** Disable JIT schema compilation. Useful in environments that disallow `eval`. */
   jitless?: boolean | undefined;
+  /**
+   * Enable strict (trusted) coercion mode globally.
+   * When enabled, coercion will reject ambiguous inputs instead of silently
+   * converting them to default values (e.g. empty string → 0 for numbers).
+   * Can be overridden per-schema via the `strictCoerce` schema option.
+   * @default false
+   */
+  strictCoerce?: boolean | undefined;
 }
 
 interface GlobalThisWithConfig {

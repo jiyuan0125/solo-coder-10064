@@ -11,6 +11,102 @@ import type { ProcessParams, ToJSONSchemaContext } from "./to-json-schema.js";
 import * as util from "./util.js";
 import { version } from "./versions.js";
 
+/////////////////////////////   STRICT COERCE HELPERS   //////////////////////////////
+
+function isStrictCoerceEnabled(def: { strictCoerce?: boolean | undefined }): boolean {
+  if (def.strictCoerce !== undefined) return def.strictCoerce;
+  return core.globalConfig.strictCoerce ?? false;
+}
+
+function isValidStrictNumberInput(value: unknown): boolean {
+  if (typeof value === "number") return true;
+  if (typeof value === "bigint") return true;
+  if (typeof value === "boolean") return true;
+  if (value instanceof Date) return true;
+  if (typeof value === "string") {
+    if (value.length === 0) return false;
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return false;
+    const num = Number(trimmed);
+    if (Number.isNaN(num)) return false;
+    if (!Number.isFinite(num)) return false;
+    return true;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return false;
+    if (value.length === 1) return isValidStrictNumberInput(value[0]);
+    return false;
+  }
+  if (value === null) return false;
+  if (value === undefined) return false;
+  if (typeof value === "object" && value !== null) return false;
+  return true;
+}
+
+function isValidStrictBooleanInput(value: unknown): boolean {
+  if (typeof value === "boolean") return true;
+  if (typeof value === "number") return true;
+  if (typeof value === "bigint") return true;
+  if (value instanceof Date) return true;
+  if (typeof value === "string") {
+    if (value.length === 0) return false;
+    if (value.trim().length === 0) return false;
+    return true;
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return false;
+    return true;
+  }
+  if (value === null) return false;
+  if (value === undefined) return false;
+  if (typeof value === "object" && value !== null) return false;
+  return true;
+}
+
+function isValidStrictBigintInput(value: unknown): boolean {
+  if (typeof value === "bigint") return true;
+  if (typeof value === "boolean") return true;
+  if (value instanceof Date) return true;
+  if (typeof value === "number" && Number.isFinite(value)) return true;
+  if (typeof value === "string") {
+    if (value.length === 0) return false;
+    if (value.trim().length === 0) return false;
+    const trimmed = value.trim();
+    try {
+      BigInt(trimmed);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return false;
+    if (value.length === 1) return isValidStrictBigintInput(value[0]);
+  }
+  if (value === null) return false;
+  if (value === undefined) return false;
+  if (typeof value === "object" && value !== null) return false;
+  return true;
+}
+
+function isValidStrictDateInput(value: unknown): boolean {
+  if (value instanceof Date) return true;
+  if (typeof value === "number" && Number.isFinite(value)) return true;
+  if (typeof value === "bigint") return true;
+  if (typeof value === "boolean") return true;
+  if (typeof value === "string") {
+    if (value.length === 0) return false;
+    if (value.trim().length === 0) return false;
+    const d = new Date(value);
+    return !Number.isNaN(d.getTime());
+  }
+  if (value === null) return false;
+  if (value === undefined) return false;
+  if (Array.isArray(value)) return false;
+  if (typeof value === "object" && value !== null) return false;
+  return true;
+}
+
 /////////////////////////////   PARSE   //////////////////////////////
 
 export interface ParseContext<T extends errors.$ZodIssueBase = never> {
@@ -41,6 +137,12 @@ export interface ParsePayload<T = unknown> {
    * undefined. Set by $ZodCatch when catchValue substitutes and by every
    * $ZodTransform invocation. */
   fallback?: boolean | undefined;
+  /**
+   * Issues that were suppressed (e.g. by a catch/fallback handler).
+   * Allows tracing original validation failures even when a fallback
+   * value was used.
+   */
+  suppressedIssues?: errors.$ZodRawIssue[] | undefined;
 }
 
 export type CheckFn<T> = (input: ParsePayload<T>) => util.MaybeAsync<void>;
@@ -1094,6 +1196,14 @@ export const $ZodCustomStringFormat: core.$constructor<$ZodCustomStringFormat> =
 export interface $ZodNumberDef extends $ZodTypeDef {
   type: "number";
   coerce?: boolean;
+  /**
+   * Enable strict (trusted) coercion for this schema.
+   * When enabled, ambiguous inputs (e.g. empty strings, whitespace-only strings,
+   * empty arrays, null) will be rejected instead of silently converted to
+   * default values (e.g. 0). If undefined, falls back to global
+   * `config().strictCoerce`.
+   */
+  strictCoerce?: boolean;
   // checks: checks.$ZodCheck<number>[];
 }
 
@@ -1122,10 +1232,23 @@ export const $ZodNumber: core.$constructor<$ZodNumber> = /*@__PURE__*/ core.$con
 
   inst._zod.pattern = inst._zod.bag.pattern ?? regexes.number;
   inst._zod.parse = (payload, _ctx) => {
-    if (def.coerce)
+    if (def.coerce) {
+      const strict = isStrictCoerceEnabled(def);
+      if (strict && !isValidStrictNumberInput(payload.value)) {
+        const input = payload.value;
+        payload.issues.push({
+          expected: "number",
+          code: "invalid_type",
+          input,
+          inst,
+          received: "invalid_coercion_input",
+        });
+        return payload;
+      }
       try {
         payload.value = Number(payload.value);
       } catch (_) {}
+    }
     const input = payload.value;
     if (typeof input === "number" && !Number.isNaN(input) && Number.isFinite(input)) {
       return payload;
@@ -1185,6 +1308,14 @@ export const $ZodNumberFormat: core.$constructor<$ZodNumberFormat> = /*@__PURE__
 export interface $ZodBooleanDef extends $ZodTypeDef {
   type: "boolean";
   coerce?: boolean;
+  /**
+   * Enable strict (trusted) coercion for this schema.
+   * When enabled, ambiguous inputs (e.g. empty strings, whitespace-only strings,
+   * empty arrays, null) will be rejected instead of silently converted to
+   * default values (e.g. false). If undefined, falls back to global
+   * `config().strictCoerce`.
+   */
+  strictCoerce?: boolean;
   checks?: checks.$ZodCheck<boolean>[];
 }
 
@@ -1205,10 +1336,23 @@ export const $ZodBoolean: core.$constructor<$ZodBoolean> = /*@__PURE__*/ core.$c
     inst._zod.pattern = regexes.boolean;
 
     inst._zod.parse = (payload, _ctx) => {
-      if (def.coerce)
+      if (def.coerce) {
+        const strict = isStrictCoerceEnabled(def);
+        if (strict && !isValidStrictBooleanInput(payload.value)) {
+          const input = payload.value;
+          payload.issues.push({
+            expected: "boolean",
+            code: "invalid_type",
+            input,
+            inst,
+            received: "invalid_coercion_input",
+          });
+          return payload;
+        }
         try {
           payload.value = Boolean(payload.value);
         } catch (_) {}
+      }
       const input = payload.value;
       if (typeof input === "boolean") return payload;
       payload.issues.push({
@@ -1234,6 +1378,14 @@ export const $ZodBoolean: core.$constructor<$ZodBoolean> = /*@__PURE__*/ core.$c
 export interface $ZodBigIntDef extends $ZodTypeDef {
   type: "bigint";
   coerce?: boolean;
+  /**
+   * Enable strict (trusted) coercion for this schema.
+   * When enabled, ambiguous inputs (e.g. empty strings, whitespace-only strings,
+   * empty arrays, null) will be rejected instead of silently converted to
+   * default values (e.g. 0n). If undefined, falls back to global
+   * `config().strictCoerce`.
+   */
+  strictCoerce?: boolean;
   // checks: checks.$ZodCheck<bigint>[];
 }
 
@@ -1258,10 +1410,22 @@ export const $ZodBigInt: core.$constructor<$ZodBigInt> = /*@__PURE__*/ core.$con
   inst._zod.pattern = regexes.bigint;
 
   inst._zod.parse = (payload, _ctx) => {
-    if (def.coerce)
+    if (def.coerce) {
+      const strict = isStrictCoerceEnabled(def);
+      if (strict && !isValidStrictBigintInput(payload.value)) {
+        payload.issues.push({
+          expected: "bigint",
+          code: "invalid_type",
+          input: payload.value,
+          inst,
+          received: "invalid_coercion_input",
+        });
+        return payload;
+      }
       try {
         payload.value = BigInt(payload.value);
       } catch (_) {}
+    }
 
     if (typeof payload.value === "bigint") return payload;
     payload.issues.push({
@@ -1561,6 +1725,14 @@ export const $ZodVoid: core.$constructor<$ZodVoid> = /*@__PURE__*/ core.$constru
 export interface $ZodDateDef extends $ZodTypeDef {
   type: "date";
   coerce?: boolean;
+  /**
+   * Enable strict (trusted) coercion for this schema.
+   * When enabled, ambiguous inputs (e.g. empty strings, whitespace-only strings,
+   * invalid date strings, null) will be rejected instead of silently converted to
+   * Invalid Date objects. If undefined, falls back to global
+   * `config().strictCoerce`.
+   */
+  strictCoerce?: boolean;
 }
 
 export interface $ZodDateInternals<T = unknown> extends $ZodTypeInternals<Date, T> {
@@ -1582,6 +1754,18 @@ export const $ZodDate: core.$constructor<$ZodDate> = /*@__PURE__*/ core.$constru
 
   inst._zod.parse = (payload, _ctx) => {
     if (def.coerce) {
+      const strict = isStrictCoerceEnabled(def);
+      if (strict && !isValidStrictDateInput(payload.value)) {
+        const input = payload.value;
+        payload.issues.push({
+          expected: "date",
+          code: "invalid_type",
+          input,
+          inst,
+          received: "invalid_coercion_input",
+        });
+        return payload;
+      }
       try {
         payload.value = new Date(payload.value as string | number | Date);
       } catch (_err: any) {}
@@ -1762,6 +1946,11 @@ function handlePropertyResult(
       return;
     }
     final.issues.push(...util.prefixIssues(key, result.issues));
+  }
+
+  if (result.suppressedIssues && result.suppressedIssues.length > 0) {
+    final.suppressedIssues ??= [];
+    final.suppressedIssues.push(...util.prefixIssues(key, result.suppressedIssues));
   }
 
   if (!isPresent && !isOptionalIn) {
@@ -2026,6 +2215,13 @@ export const $ZodObjectJIT: core.$constructor<$ZodObject> = /*@__PURE__*/ core.$
             })));
           }
         }
+        if (${id}.suppressedIssues && ${id}.suppressedIssues.length > 0) {
+          payload.suppressedIssues ??= [];
+          payload.suppressedIssues = payload.suppressedIssues.concat(${id}.suppressedIssues.map(iss => ({
+            ...iss,
+            path: iss.path ? [${k}, ...iss.path] : [${k}]
+          })));
+        }
         
         if (${id}.value === undefined) {
           if (${k} in input) {
@@ -2041,6 +2237,13 @@ export const $ZodObjectJIT: core.$constructor<$ZodObject> = /*@__PURE__*/ core.$
         const ${id}_present = ${k} in input;
         if (${id}.issues.length) {
           payload.issues = payload.issues.concat(${id}.issues.map(iss => ({
+            ...iss,
+            path: iss.path ? [${k}, ...iss.path] : [${k}]
+          })));
+        }
+        if (${id}.suppressedIssues && ${id}.suppressedIssues.length > 0) {
+          payload.suppressedIssues ??= [];
+          payload.suppressedIssues = payload.suppressedIssues.concat(${id}.suppressedIssues.map(iss => ({
             ...iss,
             path: iss.path ? [${k}, ...iss.path] : [${k}]
           })));
@@ -2067,6 +2270,13 @@ export const $ZodObjectJIT: core.$constructor<$ZodObject> = /*@__PURE__*/ core.$
           doc.write(`
         if (${id}.issues.length) {
           payload.issues = payload.issues.concat(${id}.issues.map(iss => ({
+            ...iss,
+            path: iss.path ? [${k}, ...iss.path] : [${k}]
+          })));
+        }
+        if (${id}.suppressedIssues && ${id}.suppressedIssues.length > 0) {
+          payload.suppressedIssues ??= [];
+          payload.suppressedIssues = payload.suppressedIssues.concat(${id}.suppressedIssues.map(iss => ({
             ...iss,
             path: iss.path ? [${k}, ...iss.path] : [${k}]
           })));
@@ -3910,6 +4120,7 @@ export const $ZodCatch: core.$constructor<$ZodCatch> = /*@__PURE__*/ core.$const
       return result.then((result) => {
         payload.value = result.value;
         if (result.issues.length) {
+          payload.suppressedIssues = [...(payload.suppressedIssues ?? []), ...result.issues];
           payload.value = def.catchValue({
             ...payload,
             error: {
@@ -3927,6 +4138,7 @@ export const $ZodCatch: core.$constructor<$ZodCatch> = /*@__PURE__*/ core.$const
 
     payload.value = result.value;
     if (result.issues.length) {
+      payload.suppressedIssues = [...(payload.suppressedIssues ?? []), ...result.issues];
       payload.value = def.catchValue({
         ...payload,
         error: {

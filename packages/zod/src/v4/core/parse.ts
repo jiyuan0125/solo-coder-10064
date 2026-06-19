@@ -21,6 +21,9 @@ export const _parse: (_Err: $ZodErrorClass) => $Parse = (_Err) => (schema, value
   }
   if (result.issues.length) {
     const e = new (_params?.Err ?? _Err)(result.issues.map((iss) => util.finalizeIssue(iss, ctx, core.config())));
+    if (result.suppressedIssues && result.suppressedIssues.length > 0) {
+      (e as any).suppressedIssues = result.suppressedIssues.map((iss) => util.finalizeIssue(iss, ctx, core.config()));
+    }
     util.captureStackTrace(e, _params?.callee);
     throw e;
   }
@@ -42,6 +45,9 @@ export const _parseAsync: (_Err: $ZodErrorClass) => $ParseAsync = (_Err) => asyn
   if (result instanceof Promise) result = await result;
   if (result.issues.length) {
     const e = new (params?.Err ?? _Err)(result.issues.map((iss) => util.finalizeIssue(iss, ctx, core.config())));
+    if (result.suppressedIssues && result.suppressedIssues.length > 0) {
+      (e as any).suppressedIssues = result.suppressedIssues.map((iss) => util.finalizeIssue(iss, ctx, core.config()));
+    }
     util.captureStackTrace(e, params?.callee);
     throw e;
   }
@@ -64,11 +70,28 @@ export const _safeParse: (_Err: $ZodErrorClass) => $SafeParse = (_Err) => (schem
   }
 
   return result.issues.length
-    ? {
-        success: false,
-        error: new (_Err ?? errors.$ZodError)(result.issues.map((iss) => util.finalizeIssue(iss, ctx, core.config()))),
-      }
-    : ({ success: true, data: result.value } as any);
+    ? (() => {
+        const err = new (_Err ?? errors.$ZodError)(
+          result.issues.map((iss) => util.finalizeIssue(iss, ctx, core.config()))
+        );
+        if (result.suppressedIssues && result.suppressedIssues.length > 0) {
+          (err as any).suppressedIssues = result.suppressedIssues.map((iss) =>
+            util.finalizeIssue(iss, ctx, core.config())
+          );
+        }
+        return {
+          success: false,
+          error: err,
+        } as any;
+      })()
+    : (() => {
+        const success: any = { success: true, data: result.value };
+        if (result.suppressedIssues && result.suppressedIssues.length > 0) {
+          success.suppressedIssues = result.suppressedIssues.map((iss) => util.finalizeIssue(iss, ctx, core.config()));
+          success.fallback = true;
+        }
+        return success;
+      })();
 };
 export const safeParse: $SafeParse = /* @__PURE__*/ _safeParse(errors.$ZodRealError);
 
@@ -84,11 +107,26 @@ export const _safeParseAsync: (_Err: $ZodErrorClass) => $SafeParseAsync = (_Err)
   if (result instanceof Promise) result = await result;
 
   return result.issues.length
-    ? {
-        success: false,
-        error: new _Err(result.issues.map((iss) => util.finalizeIssue(iss, ctx, core.config()))),
-      }
-    : ({ success: true, data: result.value } as any);
+    ? (() => {
+        const err = new _Err(result.issues.map((iss) => util.finalizeIssue(iss, ctx, core.config())));
+        if (result.suppressedIssues && result.suppressedIssues.length > 0) {
+          (err as any).suppressedIssues = result.suppressedIssues.map((iss) =>
+            util.finalizeIssue(iss, ctx, core.config())
+          );
+        }
+        return {
+          success: false,
+          error: err,
+        } as any;
+      })()
+    : (() => {
+        const success: any = { success: true, data: result.value };
+        if (result.suppressedIssues && result.suppressedIssues.length > 0) {
+          success.suppressedIssues = result.suppressedIssues.map((iss) => util.finalizeIssue(iss, ctx, core.config()));
+          success.fallback = true;
+        }
+        return success;
+      })();
 };
 
 export const safeParseAsync: $SafeParseAsync = /* @__PURE__*/ _safeParseAsync(errors.$ZodRealError);

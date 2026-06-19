@@ -219,12 +219,29 @@ export interface $ZodErrorMap<T extends $ZodIssueBase = $ZodIssue> {
 export interface $ZodError<T = unknown> extends Error {
   type: T;
   issues: $ZodIssue[];
+  /**
+   * Issues that were suppressed by a catch/fallback handler.
+   * This allows tracing the original validation failures even when
+   * a fallback value was used.
+   */
+  suppressedIssues?: $ZodIssue[];
   _zod: {
     output: T;
     def: $ZodIssue[];
   };
   stack?: string;
   name: string;
+  /**
+   * Structured serialization for JSON.stringify and logging.
+   * Returns an object with all error information preserved,
+   * including full issue paths.
+   */
+  toJSON(): {
+    name: string;
+    issues: $ZodIssue[];
+    suppressedIssues?: $ZodIssue[];
+    message: string;
+  };
 }
 
 const initializer = (inst: $ZodError, def: $ZodIssue[]): void => {
@@ -236,11 +253,38 @@ const initializer = (inst: $ZodError, def: $ZodIssue[]): void => {
   Object.defineProperty(inst, "issues", {
     value: def,
     enumerable: false,
+    writable: true,
+  });
+  Object.defineProperty(inst, "suppressedIssues", {
+    value: undefined,
+    enumerable: false,
+    writable: true,
+    configurable: true,
   });
   inst.message = JSON.stringify(def, util.jsonStringifyReplacer, 2);
 
   Object.defineProperty(inst, "toString", {
     value: () => inst.message,
+    enumerable: false,
+  });
+
+  Object.defineProperty(inst, "toJSON", {
+    value: () => {
+      const result: {
+        name: string;
+        issues: $ZodIssue[];
+        suppressedIssues?: $ZodIssue[];
+        message: string;
+      } = {
+        name: inst.name,
+        issues: inst.issues,
+        message: inst.message,
+      };
+      if (inst.suppressedIssues && inst.suppressedIssues.length > 0) {
+        result.suppressedIssues = inst.suppressedIssues;
+      }
+      return result;
+    },
     enumerable: false,
   });
 };
